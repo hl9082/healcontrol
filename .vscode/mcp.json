@@ -1,0 +1,9 @@
+{
+    "servers": {
+        "healcontrol": {
+            "command": "uv",
+            "args": ["run", "python", "src/server.py"],
+            "cwd": "${workspaceFolder}"
+        }
+    }
+}
