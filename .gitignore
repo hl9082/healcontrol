@@ -1,0 +1,7 @@
+.env
+__pycache__/
+.venv/
+.pytest_cache/
+dist/
+*.egg-info/
+broken_app/.git/

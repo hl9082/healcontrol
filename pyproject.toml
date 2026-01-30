@@ -1,0 +1,18 @@
+[project]
+name = "healcontrol"
+version = "0.1.0"
+description = "Local-First DevOps Agent — detects test failures, reads broken code, applies fixes, and verifies via MCP tools."
+requires-python = ">=3.12"
+dependencies = [
+    "mcp[cli]",
+    "python-dotenv",
+    "ibm-watsonx-ai",
+    "pytest",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
