@@ -37,31 +37,39 @@ from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
-# Lazy watsonx setup — only initialized if credentials are present
-_watsonx_model = None
+# Lazy Granite model setup — loaded on first use via HuggingFace `transformers`.
+_granite_model = None
+_granite_tokenizer = None
 
 
-def _get_watsonx_model():
-    global _watsonx_model
-    if _watsonx_model is not None:
-        return _watsonx_model
+def _get_granite_model():
+    """Load IBM Granite from HuggingFace for local inference.
 
-    api_key = os.getenv("WATSONX_APIKEY")
-    url = os.getenv("WATSONX_URL")
-    project_id = os.getenv("WATSONX_PROJECT_ID")
+    Returns (model, tokenizer) or (None, None) on failure.
+    """
+    global _granite_model, _granite_tokenizer
+    if _granite_model is not None and _granite_tokenizer is not None:
+        return _granite_model, _granite_tokenizer
 
-    if not all([api_key, url, project_id]):
-        return None
+    try:
+        from transformers import AutoTokenizer, AutoModelForCausalLM
+        import torch
 
-    from ibm_watsonx_ai import Credentials
-    from ibm_watsonx_ai.foundation_models import ModelInference
-
-    _watsonx_model = ModelInference(
-        model_id="ibm/granite-3-3-8b-instruct",
-        credentials=Credentials(url=url, api_key=api_key),
-        project_id=project_id,
-    )
-    return _watsonx_model
+        model_name = "ibm-granite/granite-3b-code-base"
+        # Load tokenizer and model (device_map="auto" will place on GPU if available)
+        _granite_tokenizer = AutoTokenizer.from_pretrained(model_name)
+        _granite_model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map="auto",
+        )
+        return _granite_model, _granite_tokenizer
+    except ImportError:
+        print("transformers/torch not installed. Run: pip install transformers torch", file=sys.stderr)
+        return None, None
+    except Exception as e:
+        print(f"Error loading Granite model: {e}", file=sys.stderr)
+        return None, None
 
 
 mcp = FastMCP("healcontrol")
@@ -308,11 +316,11 @@ def reset_broken_app() -> str:
 @mcp.tool()
 def analyze_with_watsonx(error_output: str, filename: str = "") -> str:
     """Send test failure output to IBM Granite for AI-powered diagnosis."""
-    model = _get_watsonx_model()
-    if model is None:
+    model, tokenizer = _get_granite_model()
+    if model is None or tokenizer is None:
         return (
-            "watsonx.ai not configured. "
-            "Set WATSONX_APIKEY, WATSONX_URL, and WATSONX_PROJECT_ID in .env"
+            "IBM Granite model failed to load. "
+            "Ensure transformers and torch are installed: pip install transformers torch"
         )
 
     file_context = f" from file '{filename}'" if filename else ""
@@ -330,17 +338,30 @@ def analyze_with_watsonx(error_output: str, filename: str = "") -> str:
     )
 
     try:
-        response = model.generate(
-            prompt=prompt,
-            params={
-                "max_new_tokens": 500,
-                "temperature": 0.2,
-                "stop_sequences": ["\n\n\n"],
-            },
-        )
-        return response["results"][0]["generated_text"]
+        import torch
+
+        # Tokenize and move inputs to the model device
+        inputs = tokenizer(prompt, return_tensors="pt")
+        device = next(model.parameters()).device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        # Generate response
+        with torch.no_grad():
+            outputs = model.generate(
+                inputs["input_ids"],
+                max_new_tokens=500,
+                temperature=0.2,
+                top_p=0.95,
+                do_sample=True,
+            )
+
+        response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+        if "Analysis:" in response_text:
+            return response_text.split("Analysis:", 1)[1].strip()
+        return response_text
     except Exception as e:
-        return f"watsonx.ai analysis failed: {e}"
+        return f"Granite model analysis failed: {e}"
 
 
 # ── Push to cloud ──
