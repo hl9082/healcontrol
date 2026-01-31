@@ -1,4 +1,29 @@
-"""HealControl — Local-First DevOps MCP Server."""
+"""
+HealControl — Local-First DevOps MCP Server.
+
+Team: Healing Control
+Main Author: Olivier Couthaud
+Co-Authors: Huy Le, Vaibhav, Sachi Kiny
+
+Description:
+    An MCP (Model Context Protocol) server that gives AI assistants the ability
+    to autonomously detect test failures, read broken source code, apply surgical
+    fixes, verify corrections, and ship changes via Git — all locally.
+
+    Tools provided:
+        - check_pipeline_status  : Run the test suite and report pass/fail.
+        - list_files             : List Python files in the active app.
+        - read_code_file         : Read a source file with line numbers.
+        - apply_surgical_fix     : Overwrite a file with corrected code.
+        - verify_fix             : Re-run tests to confirm the fix.
+        - create_git_branch      : Create and switch to a new branch.
+        - commit_fix             : Stage and commit changes.
+        - reset_broken_app       : Reset the demo app to its buggy state.
+        - analyze_with_watsonx   : AI-powered diagnosis via IBM Granite.
+        - push_to_cloud          : Push a branch and open a GitHub PR.
+        - list_apps              : List all registered target apps.
+        - set_active_app         : Switch the active target app.
+"""
 
 import json
 import os
