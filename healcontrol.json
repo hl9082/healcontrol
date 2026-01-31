@@ -1,0 +1,10 @@
+{
+  "apps": {
+    "broken_app": {
+      "path": "broken_app",
+      "test_command": "pytest",
+      "description": "Demo app with discount calculation bug"
+    }
+  },
+  "default_app": "broken_app"
+}
