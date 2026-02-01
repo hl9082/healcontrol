@@ -57,7 +57,7 @@ def _get_watsonx_model():
     from ibm_watsonx_ai.foundation_models import ModelInference
 
     _watsonx_model = ModelInference(
-        model_id="ibm/granite-3-3-8b-instruct",
+        model_id="ibm/granite-4-h-small",
         credentials=Credentials(url=url, api_key=api_key),
         project_id=project_id,
     )
@@ -330,15 +330,14 @@ def analyze_with_watsonx(error_output: str, filename: str = "") -> str:
     )
 
     try:
-        response = model.generate(
-            prompt=prompt,
+        response = model.chat(
+            messages=[{"role": "user", "content": prompt}],
             params={
-                "max_new_tokens": 500,
+                "max_tokens": 500,
                 "temperature": 0.2,
-                "stop_sequences": ["\n\n\n"],
             },
         )
-        return response["results"][0]["generated_text"]
+        return response["choices"][0]["message"]["content"]
     except Exception as e:
         return f"watsonx.ai analysis failed: {e}"
 
