@@ -32,36 +32,35 @@ import subprocess
 import sys
 from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
-# Lazy watsonx setup — only initialized if credentials are present
-_watsonx_model = None
+# watsonx config
+_watsonx_token: str | None = None
 
 
-def _get_watsonx_model():
-    global _watsonx_model
-    if _watsonx_model is not None:
-        return _watsonx_model
+def _get_watsonx_token() -> str | None:
+    """Get an IAM bearer token for watsonx. Cached for the process lifetime."""
+    global _watsonx_token
+    if _watsonx_token is not None:
+        return _watsonx_token
 
     api_key = os.getenv("WATSONX_APIKEY")
-    url = os.getenv("WATSONX_URL")
-    project_id = os.getenv("WATSONX_PROJECT_ID")
-
-    if not all([api_key, url, project_id]):
+    if not api_key:
         return None
 
-    from ibm_watsonx_ai import Credentials
-    from ibm_watsonx_ai.foundation_models import ModelInference
-
-    _watsonx_model = ModelInference(
-        model_id="ibm/granite-4-h-small",
-        credentials=Credentials(url=url, api_key=api_key),
-        project_id=project_id,
+    resp = requests.post(
+        "https://iam.cloud.ibm.com/identity/token",
+        data={"apikey": api_key, "grant_type": "urn:ibm:params:oauth:grant-type:apikey"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
     )
-    return _watsonx_model
+    resp.raise_for_status()
+    _watsonx_token = resp.json()["access_token"]
+    return _watsonx_token
 
 
 mcp = FastMCP("healcontrol")
@@ -304,12 +303,18 @@ def reset_broken_app() -> str:
 @mcp.tool()
 def analyze_with_watsonx(error_output: str, filename: str = "") -> str:
     """Send test failure output to IBM Granite for AI-powered diagnosis."""
-    model = _get_watsonx_model()
-    if model is None:
+    url = os.getenv("WATSONX_URL")
+    project_id = os.getenv("WATSONX_PROJECT_ID")
+
+    if not all([url, project_id]):
         return (
             "watsonx.ai not configured. "
             "Set WATSONX_APIKEY, WATSONX_URL, and WATSONX_PROJECT_ID in .env"
         )
+
+    token = _get_watsonx_token()
+    if token is None:
+        return "watsonx.ai not configured. Set WATSONX_APIKEY in .env"
 
     file_context = f" from file '{filename}'" if filename else ""
 
@@ -326,14 +331,20 @@ def analyze_with_watsonx(error_output: str, filename: str = "") -> str:
     )
 
     try:
-        response = model.chat(
-            messages=[{"role": "user", "content": prompt}],
-            params={
+        resp = requests.post(
+            f"{url}/ml/v1/text/chat?version=2024-10-25",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "model_id": "ibm/granite-4-h-small",
+                "project_id": project_id,
+                "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 500,
                 "temperature": 0.2,
             },
+            timeout=30,
         )
-        return response["choices"][0]["message"]["content"]
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"watsonx.ai analysis failed: {e}"
 
