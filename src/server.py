@@ -294,10 +294,6 @@ def reset_broken_app() -> str:
             f"Current active app is '{_active_app}'."
         )
     target = _get_target_dir()
-    # Switch branch first, then overwrite the file
-    checkout = _run(["git", "checkout", "main"])
-    if checkout.returncode != 0:
-        return f"Error checking out main branch: {checkout.stderr}"
     path = target / "main.py"
     path.write_text(BUGGY_MAIN, encoding="utf-8")
     return "broken_app/main.py reset to buggy state."
