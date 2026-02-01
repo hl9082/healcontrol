@@ -1,3 +1,10 @@
+"""
+Tests for broken_app — defines the correct behavior for calculate_discount().
+
+Team: Healing Control
+Main Author: Olivier Couthaud
+"""
+
 from broken_app.main import calculate_discount
 
 

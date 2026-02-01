@@ -1,4 +1,29 @@
-"""HealControl — Local-First DevOps MCP Server."""
+"""
+HealControl — Local-First DevOps MCP Server.
+
+Team: Healing Control
+Main Author: Olivier Couthaud
+Co-Authors: Huy Le, Vaibhav, Sachi Kiny
+
+Description:
+    An MCP (Model Context Protocol) server that gives AI assistants the ability
+    to autonomously detect test failures, read broken source code, apply surgical
+    fixes, verify corrections, and ship changes via Git — all locally.
+
+    Tools provided:
+        - check_pipeline_status  : Run the test suite and report pass/fail.
+        - list_files             : List Python files in the active app.
+        - read_code_file         : Read a source file with line numbers.
+        - apply_surgical_fix     : Overwrite a file with corrected code.
+        - verify_fix             : Re-run tests to confirm the fix.
+        - create_git_branch      : Create and switch to a new branch.
+        - commit_fix             : Stage and commit changes.
+        - reset_broken_app       : Reset the demo app to its buggy state.
+        - analyze_with_watsonx   : AI-powered diagnosis via IBM Granite.
+        - push_to_cloud          : Push a branch and open a GitHub PR.
+        - list_apps              : List all registered target apps.
+        - set_active_app         : Switch the active target app.
+"""
 
 import json
 import os
@@ -7,36 +32,35 @@ import subprocess
 import sys
 from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
-# Lazy watsonx setup — only initialized if credentials are present
-_watsonx_model = None
+# watsonx config
+_watsonx_token: str | None = None
 
 
-def _get_watsonx_model():
-    global _watsonx_model
-    if _watsonx_model is not None:
-        return _watsonx_model
+def _get_watsonx_token() -> str | None:
+    """Get an IAM bearer token for watsonx. Cached for the process lifetime."""
+    global _watsonx_token
+    if _watsonx_token is not None:
+        return _watsonx_token
 
     api_key = os.getenv("WATSONX_APIKEY")
-    url = os.getenv("WATSONX_URL")
-    project_id = os.getenv("WATSONX_PROJECT_ID")
-
-    if not all([api_key, url, project_id]):
+    if not api_key:
         return None
 
-    from ibm_watsonx_ai import Credentials
-    from ibm_watsonx_ai.foundation_models import ModelInference
-
-    _watsonx_model = ModelInference(
-        model_id="ibm/granite-3-3-8b-instruct",
-        credentials=Credentials(url=url, api_key=api_key),
-        project_id=project_id,
+    resp = requests.post(
+        "https://iam.cloud.ibm.com/identity/token",
+        data={"apikey": api_key, "grant_type": "urn:ibm:params:oauth:grant-type:apikey"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
     )
-    return _watsonx_model
+    resp.raise_for_status()
+    _watsonx_token = resp.json()["access_token"]
+    return _watsonx_token
 
 
 mcp = FastMCP("healcontrol")
@@ -242,7 +266,7 @@ def verify_fix() -> str:
 @mcp.tool()
 def create_git_branch(branch_name: str) -> str:
     """Create and switch to a new git branch in the active app."""
-    result = _run(["git", "checkout", "-b", branch_name])
+    result = _run(["git", "checkout", "-b", branch_name], cwd=PROJECT_ROOT)
     if result.returncode != 0:
         return f"Error creating branch: {result.stderr}"
     return f"Branch created and checked out: {branch_name}"
@@ -251,10 +275,10 @@ def create_git_branch(branch_name: str) -> str:
 @mcp.tool()
 def commit_fix(message: str) -> str:
     """Stage all changes and commit in the active app."""
-    add = _run(["git", "add", "."])
+    add = _run(["git", "add", "."], cwd=PROJECT_ROOT)
     if add.returncode != 0:
         return f"Error staging files: {add.stderr}"
-    commit = _run(["git", "commit", "-m", message])
+    commit = _run(["git", "commit", "-m", message], cwd=PROJECT_ROOT)
     if commit.returncode != 0:
         return f"Error committing: {commit.stderr}"
     return f"Committed: {message}\n{commit.stdout}"
@@ -269,10 +293,6 @@ def reset_broken_app() -> str:
             f"Current active app is '{_active_app}'."
         )
     target = _get_target_dir()
-    # Switch branch first, then overwrite the file
-    checkout = _run(["git", "checkout", "main"])
-    if checkout.returncode != 0:
-        return f"Error checking out main branch: {checkout.stderr}"
     path = target / "main.py"
     path.write_text(BUGGY_MAIN, encoding="utf-8")
     return "broken_app/main.py reset to buggy state."
@@ -283,12 +303,18 @@ def reset_broken_app() -> str:
 @mcp.tool()
 def analyze_with_watsonx(error_output: str, filename: str = "") -> str:
     """Send test failure output to IBM Granite for AI-powered diagnosis."""
-    model = _get_watsonx_model()
-    if model is None:
+    url = os.getenv("WATSONX_URL")
+    project_id = os.getenv("WATSONX_PROJECT_ID")
+
+    if not all([url, project_id]):
         return (
             "watsonx.ai not configured. "
             "Set WATSONX_APIKEY, WATSONX_URL, and WATSONX_PROJECT_ID in .env"
         )
+
+    token = _get_watsonx_token()
+    if token is None:
+        return "watsonx.ai not configured. Set WATSONX_APIKEY in .env"
 
     file_context = f" from file '{filename}'" if filename else ""
 
@@ -305,15 +331,20 @@ def analyze_with_watsonx(error_output: str, filename: str = "") -> str:
     )
 
     try:
-        response = model.generate(
-            prompt=prompt,
-            params={
-                "max_new_tokens": 500,
+        resp = requests.post(
+            f"{url}/ml/v1/text/chat?version=2024-10-25",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "model_id": "ibm/granite-4-h-small",
+                "project_id": project_id,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 500,
                 "temperature": 0.2,
-                "stop_sequences": ["\n\n\n"],
             },
+            timeout=30,
         )
-        return response["results"][0]["generated_text"]
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"watsonx.ai analysis failed: {e}"
 
@@ -331,7 +362,7 @@ def push_to_cloud(branch_name: str, title: str, body: str = "") -> str:
     target = _get_target_dir()
 
     # Verify gh is authenticated
-    auth_check = _run(["gh", "auth", "status"], cwd=target)
+    auth_check = _run(["gh", "auth", "status"], cwd=PROJECT_ROOT)
     if auth_check.returncode != 0:
         return (
             "Error: gh CLI is not authenticated. "
@@ -348,7 +379,7 @@ def push_to_cloud(branch_name: str, title: str, body: str = "") -> str:
         )
 
     # Push the branch
-    push = _run(["git", "push", "-u", "origin", branch_name], cwd=target)
+    push = _run(["git", "push", "-u", "origin", branch_name], cwd=PROJECT_ROOT)
     if push.returncode != 0:
         return f"Error pushing branch: {push.stderr}"
 
@@ -364,7 +395,7 @@ def push_to_cloud(branch_name: str, title: str, body: str = "") -> str:
     else:
         pr_cmd.extend(["--body", "Automated fix via HealControl"])
 
-    pr_result = _run(pr_cmd, cwd=target)
+    pr_result = _run(pr_cmd, cwd=PROJECT_ROOT)
     if pr_result.returncode != 0:
         return f"Error creating PR: {pr_result.stderr}"
 
