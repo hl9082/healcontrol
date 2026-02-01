@@ -266,7 +266,7 @@ def verify_fix() -> str:
 @mcp.tool()
 def create_git_branch(branch_name: str) -> str:
     """Create and switch to a new git branch in the active app."""
-    result = _run(["git", "checkout", "-b", branch_name])
+    result = _run(["git", "checkout", "-b", branch_name], cwd=PROJECT_ROOT)
     if result.returncode != 0:
         return f"Error creating branch: {result.stderr}"
     return f"Branch created and checked out: {branch_name}"
@@ -275,10 +275,10 @@ def create_git_branch(branch_name: str) -> str:
 @mcp.tool()
 def commit_fix(message: str) -> str:
     """Stage all changes and commit in the active app."""
-    add = _run(["git", "add", "."])
+    add = _run(["git", "add", "."], cwd=PROJECT_ROOT)
     if add.returncode != 0:
         return f"Error staging files: {add.stderr}"
-    commit = _run(["git", "commit", "-m", message])
+    commit = _run(["git", "commit", "-m", message], cwd=PROJECT_ROOT)
     if commit.returncode != 0:
         return f"Error committing: {commit.stderr}"
     return f"Committed: {message}\n{commit.stdout}"
