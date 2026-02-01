@@ -362,7 +362,7 @@ def push_to_cloud(branch_name: str, title: str, body: str = "") -> str:
     target = _get_target_dir()
 
     # Verify gh is authenticated
-    auth_check = _run(["gh", "auth", "status"], cwd=target)
+    auth_check = _run(["gh", "auth", "status"], cwd=PROJECT_ROOT)
     if auth_check.returncode != 0:
         return (
             "Error: gh CLI is not authenticated. "
@@ -379,7 +379,7 @@ def push_to_cloud(branch_name: str, title: str, body: str = "") -> str:
         )
 
     # Push the branch
-    push = _run(["git", "push", "-u", "origin", branch_name], cwd=target)
+    push = _run(["git", "push", "-u", "origin", branch_name], cwd=PROJECT_ROOT)
     if push.returncode != 0:
         return f"Error pushing branch: {push.stderr}"
 
@@ -395,7 +395,7 @@ def push_to_cloud(branch_name: str, title: str, body: str = "") -> str:
     else:
         pr_cmd.extend(["--body", "Automated fix via HealControl"])
 
-    pr_result = _run(pr_cmd, cwd=target)
+    pr_result = _run(pr_cmd, cwd=PROJECT_ROOT)
     if pr_result.returncode != 0:
         return f"Error creating PR: {pr_result.stderr}"
 
